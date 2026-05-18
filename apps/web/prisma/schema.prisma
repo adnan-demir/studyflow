@@ -1,0 +1,319 @@
+// StudyFlow AI - Prisma Schema
+// Phase 1: Core models without pgvector embeddings
+// TODO (Phase 2): Add pgvector extension and embedding fields
+
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+// ─────────────────────────────────────────────────────────────
+// Auth models (NextAuth / Auth.js)
+// ─────────────────────────────────────────────────────────────
+
+model User {
+  id            String    @id @default(cuid())
+  name          String?
+  email         String    @unique
+  emailVerified DateTime?
+  image         String?
+  password      String?   // Hashed. Null for OAuth-only accounts.
+  createdAt     DateTime  @default(now())
+  updatedAt     DateTime  @updatedAt
+
+  accounts        Account[]
+  sessions        Session[]
+  courses         Course[]
+  quizAttempts    QuizAttempt[]
+  weakTopics      WeakTopic[]
+  annotations     Annotation[]
+  chatSessions    ChatSession[]
+  studyActivities StudyActivity[]
+}
+
+model Account {
+  id                String  @id @default(cuid())
+  userId            String
+  type              String
+  provider          String
+  providerAccountId String
+  refresh_token     String? @db.Text
+  access_token      String? @db.Text
+  expires_at        Int?
+  token_type        String?
+  scope             String?
+  id_token          String? @db.Text
+  session_state     String?
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([provider, providerAccountId])
+}
+
+model Session {
+  id           String   @id @default(cuid())
+  sessionToken String   @unique
+  userId       String
+  expires      DateTime
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+}
+
+model VerificationToken {
+  identifier String
+  token      String   @unique
+  expires    DateTime
+
+  @@unique([identifier, token])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Course & Exam
+// ─────────────────────────────────────────────────────────────
+
+model Course {
+  id          String   @id @default(cuid())
+  name        String
+  description String?  @db.Text
+  userId      String
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  user            User            @relation(fields: [userId], references: [id], onDelete: Cascade)
+  exam            Exam?
+  studyMaterials  StudyMaterial[]
+  documentChunks  DocumentChunk[]
+  summaries       Summary[]
+  quizzes         Quiz[]
+  weakTopics      WeakTopic[]
+  annotations     Annotation[]
+  chatSessions    ChatSession[]
+  studyActivities StudyActivity[]
+
+  @@index([userId])
+}
+
+// One-to-one with Course. Holds the exam date and optional title/notes.
+model Exam {
+  id        String   @id @default(cuid())
+  courseId  String   @unique
+  examDate  DateTime
+  title     String?
+  notes     String?  @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+}
+
+// ─────────────────────────────────────────────────────────────
+// Study Materials & Document Chunks
+// ─────────────────────────────────────────────────────────────
+
+model StudyMaterial {
+  id       String @id @default(cuid())
+  courseId String
+  name     String
+  fileUrl  String?
+  fileType String? // "pdf", "docx", "txt", etc.
+  fileSize Int?    // bytes
+  // PENDING → PROCESSING → READY | FAILED
+  status   String @default("PENDING")
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  course         Course          @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  documentChunks DocumentChunk[]
+  annotations    Annotation[]
+
+  @@index([courseId])
+}
+
+// Stores text chunks extracted from StudyMaterial PDFs.
+// TODO (Phase 2): Add embedding Unsupported("vector(1536)") after pgvector is enabled.
+model DocumentChunk {
+  id              String  @id @default(cuid())
+  courseId        String
+  studyMaterialId String
+  content         String  @db.Text
+  chunkIndex      Int
+  pageNumber      Int?
+  metadata        Json?   // Additional chunk metadata (headings, etc.)
+  createdAt       DateTime @default(now())
+
+  course        Course        @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  studyMaterial StudyMaterial @relation(fields: [studyMaterialId], references: [id], onDelete: Cascade)
+
+  @@index([courseId])
+  @@index([studyMaterialId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Summaries
+// ─────────────────────────────────────────────────────────────
+
+model Summary {
+  id        String   @id @default(cuid())
+  courseId  String
+  title     String
+  content   String   @db.Text
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@index([courseId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Quizzes
+// ─────────────────────────────────────────────────────────────
+
+model Quiz {
+  id          String   @id @default(cuid())
+  courseId    String
+  title       String
+  description String?  @db.Text
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  course    Course         @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  questions QuizQuestion[]
+  attempts  QuizAttempt[]
+
+  @@index([courseId])
+}
+
+model QuizQuestion {
+  id            String   @id @default(cuid())
+  quizId        String
+  question      String   @db.Text
+  options       Json     // String[]
+  correctAnswer String
+  explanation   String?  @db.Text
+  orderIndex    Int
+  createdAt     DateTime @default(now())
+
+  quiz Quiz @relation(fields: [quizId], references: [id], onDelete: Cascade)
+
+  @@index([quizId])
+}
+
+model QuizAttempt {
+  id          String   @id @default(cuid())
+  quizId      String
+  userId      String
+  score       Float    // Percentage 0-100
+  totalQ      Int      // Total questions at time of attempt
+  answers     Json     // Record<questionId, selectedAnswer>
+  completedAt DateTime @default(now())
+
+  quiz Quiz @relation(fields: [quizId], references: [id], onDelete: Cascade)
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@index([quizId])
+  @@index([userId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Weak Topics
+// ─────────────────────────────────────────────────────────────
+
+model WeakTopic {
+  id         String    @id @default(cuid())
+  userId     String
+  courseId   String
+  topic      String
+  confidence Float     @default(0.0) // 0.0 (very weak) to 1.0 (strong)
+  reviewedAt DateTime?
+  createdAt  DateTime  @default(now())
+  updatedAt  DateTime  @updatedAt
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@unique([userId, courseId, topic])
+  @@index([userId, courseId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Annotations
+// ─────────────────────────────────────────────────────────────
+
+model Annotation {
+  id              String   @id @default(cuid())
+  userId          String
+  courseId        String
+  studyMaterialId String
+  content         String   @db.Text
+  pageNumber      Int?
+  highlightedText String?  @db.Text
+  color           String   @default("yellow") // "yellow" | "green" | "blue" | "red"
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  user          User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course        Course        @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  studyMaterial StudyMaterial @relation(fields: [studyMaterialId], references: [id], onDelete: Cascade)
+
+  @@index([userId, courseId])
+  @@index([studyMaterialId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Chat
+// ─────────────────────────────────────────────────────────────
+
+// A conversation thread for a specific course.
+model ChatSession {
+  id        String   @id @default(cuid())
+  userId    String
+  courseId  String
+  title     String?
+  mode      String   @default("HYBRID") // "NOTES_ONLY" | "HYBRID"
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  user     User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course   Course        @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  messages ChatMessage[]
+
+  @@index([userId, courseId])
+}
+
+model ChatMessage {
+  id            String   @id @default(cuid())
+  chatSessionId String
+  role          String   // "USER" | "ASSISTANT"
+  content       String   @db.Text
+  sources       Json?    // Source references from RAG retrieval
+  createdAt     DateTime @default(now())
+
+  chatSession ChatSession @relation(fields: [chatSessionId], references: [id], onDelete: Cascade)
+
+  @@index([chatSessionId])
+}
+
+// ─────────────────────────────────────────────────────────────
+// Study Activity (for streak and analytics)
+// ─────────────────────────────────────────────────────────────
+
+model StudyActivity {
+  id           String   @id @default(cuid())
+  userId       String
+  courseId     String
+  activityType String   // "CHAT" | "QUIZ" | "SUMMARY" | "NOTES" | "VOICE"
+  durationMin  Int?     // Session duration in minutes
+  createdAt    DateTime @default(now())
+
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
+  course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+
+  @@index([userId, courseId])
+  @@index([userId, createdAt])
+}
