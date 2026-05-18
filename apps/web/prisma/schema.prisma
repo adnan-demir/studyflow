@@ -1,14 +1,15 @@
 // StudyFlow AI - Prisma Schema
-// Phase 1: Core models without pgvector embeddings
-// TODO (Phase 2): Add pgvector extension and embedding fields
+// Phase 2: pgvector embeddings, full StudyMaterial, Chat, Summary models
 
 generator client {
-  provider = "prisma-client-js"
+  provider        = "prisma-client-js"
+  previewFeatures = ["postgresqlExtensions"]
 }
 
 datasource db {
-  provider = "postgresql"
-  url      = env("DATABASE_URL")
+  provider   = "postgresql"
+  url        = env("DATABASE_URL")
+  extensions = [pgvector(map: "vector")]
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -21,13 +22,15 @@ model User {
   email         String    @unique
   emailVerified DateTime?
   image         String?
-  password      String?   // Hashed. Null for OAuth-only accounts.
+  password      String?
   createdAt     DateTime  @default(now())
   updatedAt     DateTime  @updatedAt
 
   accounts        Account[]
   sessions        Session[]
   courses         Course[]
+  studyMaterials  StudyMaterial[]
+  summaries       Summary[]
   quizAttempts    QuizAttempt[]
   weakTopics      WeakTopic[]
   annotations     Annotation[]
@@ -97,7 +100,6 @@ model Course {
   @@index([userId])
 }
 
-// One-to-one with Course. Holds the exam date and optional title/notes.
 model Exam {
   id        String   @id @default(cuid())
   courseId  String   @unique
@@ -115,35 +117,44 @@ model Exam {
 // ─────────────────────────────────────────────────────────────
 
 model StudyMaterial {
-  id       String @id @default(cuid())
-  courseId String
-  name     String
-  fileUrl  String?
-  fileType String? // "pdf", "docx", "txt", etc.
-  fileSize Int?    // bytes
+  id               String    @id @default(cuid())
+  userId           String
+  courseId         String
+  originalFilename String
+  storedFilename   String
+  fileUrl          String?
+  mimeType         String
+  fileSize         Int
   // PENDING → PROCESSING → READY | FAILED
-  status   String @default("PENDING")
+  status           String    @default("PENDING")
+  processingError  String?   @db.Text
+  pageCount        Int?
+  chunkCount       Int?
+  processedAt      DateTime? // set when status becomes READY or FAILED
+  createdAt        DateTime  @default(now())
+  updatedAt        DateTime  @updatedAt
 
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
+  user           User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   course         Course          @relation(fields: [courseId], references: [id], onDelete: Cascade)
   documentChunks DocumentChunk[]
   annotations    Annotation[]
 
+  @@index([userId])
   @@index([courseId])
 }
 
-// Stores text chunks extracted from StudyMaterial PDFs.
-// TODO (Phase 2): Add embedding Unsupported("vector(1536)") after pgvector is enabled.
+// Stores text chunks extracted from StudyMaterial documents.
+// embedding column stores pgvector 1536-dim vectors.
 model DocumentChunk {
-  id              String  @id @default(cuid())
+  id              String   @id @default(cuid())
   courseId        String
   studyMaterialId String
-  content         String  @db.Text
+  content         String   @db.Text
   chunkIndex      Int
   pageNumber      Int?
-  metadata        Json?   // Additional chunk metadata (headings, etc.)
+  metadata        Json?
+  // pgvector column — queried via raw SQL in the AI service
+  embedding       Unsupported("vector(1536)")?
   createdAt       DateTime @default(now())
 
   course        Course        @relation(fields: [courseId], references: [id], onDelete: Cascade)
@@ -158,16 +169,25 @@ model DocumentChunk {
 // ─────────────────────────────────────────────────────────────
 
 model Summary {
-  id        String   @id @default(cuid())
-  courseId  String
-  title     String
-  content   String   @db.Text
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
+  id          String   @id @default(cuid())
+  courseId    String
+  userId      String
+  title       String
+  content     String   @db.Text
+  // "SHORT" | "DETAILED" | "BULLET" | "EXAM_FOCUSED"
+  summaryType String   @default("SHORT")
+  // "NOTES_ONLY" | "HYBRID"
+  mode        String   @default("HYBRID")
+  sources     Json?    // SourceReference[]
+  materialIds Json?    // String[] — which materials were summarised
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
 
   course Course @relation(fields: [courseId], references: [id], onDelete: Cascade)
+  user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)
 
   @@index([courseId])
+  @@index([userId])
 }
 
 // ─────────────────────────────────────────────────────────────
@@ -193,7 +213,7 @@ model QuizQuestion {
   id            String   @id @default(cuid())
   quizId        String
   question      String   @db.Text
-  options       Json     // String[]
+  options       Json
   correctAnswer String
   explanation   String?  @db.Text
   orderIndex    Int
@@ -208,9 +228,9 @@ model QuizAttempt {
   id          String   @id @default(cuid())
   quizId      String
   userId      String
-  score       Float    // Percentage 0-100
-  totalQ      Int      // Total questions at time of attempt
-  answers     Json     // Record<questionId, selectedAnswer>
+  score       Float
+  totalQ      Int
+  answers     Json
   completedAt DateTime @default(now())
 
   quiz Quiz @relation(fields: [quizId], references: [id], onDelete: Cascade)
@@ -229,7 +249,7 @@ model WeakTopic {
   userId     String
   courseId   String
   topic      String
-  confidence Float     @default(0.0) // 0.0 (very weak) to 1.0 (strong)
+  confidence Float     @default(0.0)
   reviewedAt DateTime?
   createdAt  DateTime  @default(now())
   updatedAt  DateTime  @updatedAt
@@ -253,7 +273,7 @@ model Annotation {
   content         String   @db.Text
   pageNumber      Int?
   highlightedText String?  @db.Text
-  color           String   @default("yellow") // "yellow" | "green" | "blue" | "red"
+  color           String   @default("yellow")
   createdAt       DateTime @default(now())
   updatedAt       DateTime @updatedAt
 
@@ -269,7 +289,6 @@ model Annotation {
 // Chat
 // ─────────────────────────────────────────────────────────────
 
-// A conversation thread for a specific course.
 model ChatSession {
   id        String   @id @default(cuid())
   userId    String
@@ -291,7 +310,11 @@ model ChatMessage {
   chatSessionId String
   role          String   // "USER" | "ASSISTANT"
   content       String   @db.Text
-  sources       Json?    // Source references from RAG retrieval
+  // "NOTES_ONLY" | "HYBRID" — the mode active when this message was generated
+  mode          String?
+  sources       Json?    // SourceReference[]
+  tokenUsage    Json?    // { promptTokens, completionTokens, totalTokens }
+  promptVersion String?  // semver string from prompts.PROMPT_VERSION
   createdAt     DateTime @default(now())
 
   chatSession ChatSession @relation(fields: [chatSessionId], references: [id], onDelete: Cascade)
@@ -300,7 +323,7 @@ model ChatMessage {
 }
 
 // ─────────────────────────────────────────────────────────────
-// Study Activity (for streak and analytics)
+// Study Activity
 // ─────────────────────────────────────────────────────────────
 
 model StudyActivity {
@@ -308,7 +331,7 @@ model StudyActivity {
   userId       String
   courseId     String
   activityType String   // "CHAT" | "QUIZ" | "SUMMARY" | "NOTES" | "VOICE"
-  durationMin  Int?     // Session duration in minutes
+  durationMin  Int?
   createdAt    DateTime @default(now())
 
   user   User   @relation(fields: [userId], references: [id], onDelete: Cascade)

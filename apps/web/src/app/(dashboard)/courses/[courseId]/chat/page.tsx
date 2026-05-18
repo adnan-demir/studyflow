@@ -1,9 +1,58 @@
+import { Suspense } from "react";
+import { notFound, redirect } from "next/navigation";
+import { auth } from "@/lib/auth";
+import { ChatInterface } from "@/components/chat/chat-interface";
+import { getChatSessions } from "@/actions/chat-actions";
+import { getCourse } from "@/actions/course-actions";
+import { MessageSquare, ArrowLeft } from "lucide-react";
+import { Button } from "@/components/ui/button";
+import { Skeleton } from "@/components/ui/skeleton";
 import Link from "next/link";
-import { MessageSquare, Zap, BookOpen, Globe } from "lucide-react";
-import { PlaceholderPage } from "@/components/shared/placeholder-page";
 import type { Metadata } from "next";
 
 export const metadata: Metadata = { title: "AI Chat" };
+
+async function ChatPageContent({ courseId }: { courseId: string }) {
+  const session = await auth();
+  if (!session?.user?.id) redirect("/sign-in");
+
+  const course = await getCourse(courseId);
+  if (!course) notFound();
+
+  const sessions = await getChatSessions(courseId);
+
+  return (
+    <div className="space-y-4">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <div className="flex items-center gap-3">
+          <div className="flex h-9 w-9 items-center justify-center rounded-lg bg-violet-50 dark:bg-violet-950/30">
+            <MessageSquare className="h-5 w-5 text-violet-600 dark:text-violet-400" />
+          </div>
+          <div>
+            <h1 className="text-xl font-bold tracking-tight">AI Chat</h1>
+            <p className="text-sm text-muted-foreground">{course.name}</p>
+          </div>
+        </div>
+        <Button variant="outline" size="sm" asChild>
+          <Link href={`/courses/${courseId}`}>
+            <ArrowLeft className="mr-2 h-4 w-4" />
+            Overview
+          </Link>
+        </Button>
+      </div>
+
+      {/* Chat interface (client component) */}
+      <ChatInterface
+        courseId={courseId}
+        initialSessions={sessions.map((s) => ({
+          ...s,
+          updatedAt: new Date(s.updatedAt),
+        }))}
+      />
+    </div>
+  );
+}
 
 export default async function ChatPage({
   params,
@@ -11,21 +60,16 @@ export default async function ChatPage({
   params: Promise<{ courseId: string }>;
 }) {
   const { courseId } = await params;
-
   return (
-    <PlaceholderPage
-      title="AI Chat"
-      description="Chat with an AI tutor trained on your uploaded course notes. Get instant answers, explanations, and study guidance."
-      phase="Phase 2"
-      icon={MessageSquare}
-      backHref={`/courses/${courseId}`}
-      backLabel="Back to Overview"
-      bullets={[
-        "Notes Only mode — answers based solely on your uploads",
-        "Hybrid mode — combines your notes with general AI knowledge",
-        "Source transparency — every answer shows exactly where it came from",
-        "Conversation history — pick up where you left off",
-      ]}
-    />
+    <Suspense
+      fallback={
+        <div className="space-y-4">
+          <Skeleton className="h-9 w-48" />
+          <Skeleton className="h-[calc(100vh-12rem)] w-full rounded-xl" />
+        </div>
+      }
+    >
+      <ChatPageContent courseId={courseId} />
+    </Suspense>
   );
 }

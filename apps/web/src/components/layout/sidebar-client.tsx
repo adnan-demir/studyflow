@@ -35,10 +35,10 @@ interface CourseNavItem {
 
 const COURSE_NAV_ITEMS: CourseNavItem[] = [
   { label: "Overview", href: "", icon: LayoutDashboard },
-  { label: "AI Chat", href: "/chat", icon: MessageSquare, todo: true },
-  { label: "Summaries", href: "/summaries", icon: FileText, todo: true },
+  { label: "AI Chat", href: "/chat", icon: MessageSquare },
+  { label: "Summaries", href: "/summaries", icon: FileText },
+  { label: "PDF Notes", href: "/notes", icon: FileIcon },
   { label: "Quizzes", href: "/quizzes", icon: Brain, todo: true },
-  { label: "PDF Notes", href: "/notes", icon: FileIcon, todo: true },
   { label: "Weak Topics", href: "/weak-topics", icon: Target, todo: true },
   { label: "Voice Mode", href: "/voice", icon: Mic, todo: true },
   { label: "Exam Simulation", href: "/exam-simulation", icon: GraduationCap, todo: true },

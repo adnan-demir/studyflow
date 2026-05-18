@@ -58,3 +58,6 @@ htmlcov/
 # Misc
 *.tsbuildinfo
 next-env.d.ts
+apps/web/uploads/  apps/web/uploads/ 
+apps/web/uploads/ 
+apps/web/uploads/ 
